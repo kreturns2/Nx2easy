@@ -143,14 +143,72 @@ print(p or '')
 """
 
 
-def pick(kind):
+# The system's own file browser, for a Python without tkinter (Homebrew's on a Mac, the private one in deps/ on Windows):
+# macOS's dialogs (osascript), Windows' (PowerShell), zenity or kdialog on Linux. The title goes in argv/env, never in the script.
+OSA = """on run argv
+  set k to item 1 of argv
+  if k is "folder" then
+    set p to choose folder with prompt (item 2 of argv)
+  else if k is "nup" then
+    set p to choose file with prompt (item 2 of argv) of type {"nup"}
+  else if k is "image" then
+    set p to choose file with prompt (item 2 of argv) of type {"public.image"}
+  else
+    set p to choose file with prompt (item 2 of argv)
+  end if
+  return POSIX path of p
+end run"""
+
+PS = r"""Add-Type -AssemblyName System.Windows.Forms
+$top = New-Object System.Windows.Forms.Form -Property @{TopMost = $true}
+if ($env:NX2_KIND -eq 'folder') {
+  $d = New-Object System.Windows.Forms.FolderBrowserDialog -Property @{Description = $env:NX2_TITLE; ShowNewFolderButton = $false}
+  if ($d.ShowDialog($top) -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }
+} else {
+  $d = New-Object System.Windows.Forms.OpenFileDialog -Property @{Title = $env:NX2_TITLE; Filter = $env:NX2_FILTER}
+  if ($d.ShowDialog($top) -eq 'OK') { [Console]::Out.Write($d.FileName) }
+}"""
+
+
+def native_pick(kind, title):
+    """The chosen path ("" if cancelled), or None if this system has no file browser to offer."""
     try:
-        out = subprocess.run([sys.executable, "-c", PICKER, kind, t({"folder": "dlg_folder", "image": "choose_icon", "nup": "dlg_nup"}.get(kind, "dlg_file")),
-                              t("images"), t("all_files")],
-                             capture_output=True, text=True, timeout=600).stdout.strip()
+        if sys.platform == "darwin":
+            r = subprocess.run(["osascript", "-e", OSA, kind, title], capture_output=True, text=True, timeout=600)
+            return r.stdout.strip() if r.returncode == 0 else ("" if "-128" in r.stderr else None)  # (-128: cancelled)
+        if os.name == "nt":
+            filt = {"nup": f"Dump NUP|*.nup|{t('all_files')}|*.*",
+                    "image": f"{t('images')}|*.png;*.jpg;*.jpeg;*.bmp;*.webp|{t('all_files')}|*.*"}.get(kind, f"{t('all_files')}|*.*")
+            r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", PS], capture_output=True, text=True, timeout=600,
+                               env=dict(os.environ, NX2_KIND=kind, NX2_TITLE=title, NX2_FILTER=filt),
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return r.stdout.strip() if r.returncode == 0 else None
+        if shutil.which("zenity"):
+            a = ["zenity", "--file-selection", "--title", title] + (["--directory"] if kind == "folder" else []) + \
+                (["--file-filter", "*.nup"] if kind == "nup" else ["--file-filter", "*.png *.jpg *.jpeg *.bmp *.webp"] if kind == "image" else [])
+        elif shutil.which("kdialog"):
+            a = ["kdialog", "--title", title] + (["--getexistingdirectory", str(Path.home())] if kind == "folder" else
+                                                 ["--getopenfilename", str(Path.home())] + (["*.nup"] if kind == "nup" else []))
+        else:
+            return None
+        r = subprocess.run(a, capture_output=True, text=True, timeout=600)
+        return r.stdout.strip() if r.returncode in (0, 1) else None  # (1: cancelled)
     except Exception:
-        return {"path": "", "notk": True}
-    if out == "__NOTK__":
+        return None
+
+
+def pick(kind):
+    title = t({"folder": "dlg_folder", "image": "choose_icon", "nup": "dlg_nup"}.get(kind, "dlg_file"))
+    out = native_pick(kind, title) if sys.platform == "darwin" else None  # (a Mac's own dialogs look right there; tkinter's don't)
+    if out is None:
+        try:
+            out = subprocess.run([sys.executable, "-c", PICKER, kind, title, t("images"), t("all_files")],
+                                 capture_output=True, text=True, timeout=600).stdout.strip()
+        except Exception:
+            out = "__NOTK__"
+        if out == "__NOTK__":
+            out = native_pick(kind, title) if sys.platform != "darwin" else None
+    if out is None:
         return {"path": "", "notk": True}
     return {"path": os.path.normpath(out) if out else ""}
 
@@ -586,7 +644,7 @@ main{max-width:760px;margin:0 auto;padding:8px 20px 80px}
 .x{width:30px;height:30px;border-radius:9px;color:var(--mute);transition:.2s}.x:hover{background:rgba(255,255,255,.08);color:var(--fg)}
 .link{color:var(--a2);font-size:13.5px;margin-top:12px;display:inline-flex;gap:6px;align-items:center}
 .link:hover{text-decoration:underline}
-.manual{display:flex;gap:8px;margin-top:10px}
+.manual{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.manual .in{flex:1 1 260px}
 .in{flex:1;padding:12px 14px;border-radius:12px;background:rgba(0,0,0,.3);border:1px solid var(--line);outline:0;transition:.25s}
 .in:focus{border-color:var(--a2);box-shadow:0 0 0 4px rgba(34,211,238,.12)}
 label.f{display:block;font-size:12.5px;color:var(--mute);margin:0 0 6px 2px}
@@ -764,7 +822,7 @@ kbd{padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.1);border:1px
     </div>
     <div id="gameChip"></div>
     <div id="updBox"></div>
-    <div class="manual" id="mGame" hidden><input class="in" id="iGame" placeholder="{{game_path}}"><button class="btn" data-manual="game">OK</button></div>
+    <div class="manual" id="mGame" hidden><input class="in" id="iGame" placeholder="{{game_path}}"><button class="btn" data-manual="game">OK</button><button class="btn" data-browse="nup">{{dlg_nup}}</button><button class="btn" data-browse="folder">{{dlg_folder}}</button></div>
   </div>
 
   <div class="card" id="c2">
@@ -867,6 +925,7 @@ async function setVal(to,path,isDir){
 }
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-pick]');if(b){doPick(b.dataset.pick,b.dataset.to);return}
+  const w=e.target.closest('[data-browse]');if(w){S.noTk=false;doPick(w.dataset.browse,'game');return}
   const m=e.target.closest('[data-manual]');if(m){const v=$('#iGame').value.trim().replace(/^"|"$/g,'');if(v)setVal('game',v)}
 });
 
