@@ -238,11 +238,11 @@ class Job:
         with self.lock:
             self.events.append(ev)
 
-    def start(self, args, action):
+    def start(self, args, action, extra_env=None):
         if self.running:
             return False
         self.events, self.progress, self.code, self.running, self.action = [], None, None, True, action
-        env = dict(os.environ, NX2_GUI="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+        env = dict(os.environ, NX2_GUI="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", **(extra_env or {}))
         # (setup --auto is run by this Python: the tool's own may be what it replaces)
         py = sys.executable if "--auto" in args else deps()[0]
         cmd = [py, "-u", str(REPO / "nxrelink.py")] + args
@@ -342,6 +342,8 @@ def make_args(d):
         if ":" not in host:
             host += ":5000"
         a += ["--ftp", host]
+    elif dest == "sw2t":
+        a += ["--sw2t", sw2t_host(d)]
     if d.get("nroOnly"):
         a.append("--nro-only")
     return a
@@ -356,7 +358,22 @@ def install_args(d):
     if d.get("dest") == "ftp" and d.get("ftp"):
         h = d["ftp"].strip()
         return ["install", name, "--ftp", h if ":" in h else h + ":5000"]
+    if d.get("dest") == "sw2t" and d.get("sw2t"):
+        return ["install", name, "--sw2t", sw2t_host(d)]
     raise ValueError(t("e_dest"))
+
+
+def sw2t_host(d):
+    """SW2Transfer's address on the console (its port 6967 when none is given)."""
+    host = (d.get("sw2t") or "").strip()
+    if not re.match(r"^[\w.\-]+(:\d+)?$", host):
+        raise ValueError(t("e_sw2t"))
+    return host if ":" in host else host + ":6967"
+
+
+def run_env(d):
+    """SW2Transfer's password goes to the tool in its environment, never in its arguments (which the log shows)."""
+    return {"SW2T_PASSWORD": d["sw2tPw"]} if d.get("dest") == "sw2t" and d.get("sw2tPw") else {}
 
 
 # --------------------------------------------------------------------------- http
@@ -462,7 +479,7 @@ class H(BaseHTTPRequestHandler):
                     raise ValueError(t("e_action"))
             except ValueError as e:
                 return self.send({"ok": False, "error": str(e)})
-            if not JOB.start(args, act):
+            if not JOB.start(args, act, run_env(d)):
                 return self.send({"ok": False, "error": t("e_busy")})
             return self.send({"ok": True})
         self.send({"error": "not found"}, 404)
@@ -592,11 +609,11 @@ main{max-width:760px;margin:0 auto;padding:8px 20px 80px}
 label.f{display:block;font-size:12.5px;color:var(--mute);margin:0 0 6px 2px}
 
 /* segmented */
-.seg{display:grid;grid-template-columns:repeat(3,1fr);position:relative;padding:5px;border-radius:15px;
+.seg{display:grid;grid-template-columns:repeat(4,1fr);position:relative;padding:5px;border-radius:15px;
   background:rgba(0,0,0,.3);border:1px solid var(--line);margin-bottom:14px}
 .seg button{position:relative;z-index:1;padding:10px 6px;border-radius:11px;color:var(--mute);font-weight:600;font-size:14px;transition:color .3s}
 .seg button.on{color:var(--fg)}
-.seg .pill{position:absolute;top:5px;bottom:5px;left:5px;width:calc((100% - 10px)/3);border-radius:11px;
+.seg .pill{position:absolute;top:5px;bottom:5px;left:5px;width:calc((100% - 10px)/4);border-radius:11px;
   background:linear-gradient(135deg,var(--a1),var(--a3));box-shadow:0 6px 24px -6px var(--a1);transition:transform .45s var(--ease)}
 .pane{animation:pop .4s var(--ease)}
 .drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
@@ -770,7 +787,7 @@ kbd{padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.1);border:1px
   <div class="card" id="c2">
     <div class="ch"><div class="num">2</div><div><h2>{{s2_h}}</h2><p>{{s2_p}}</p></div></div>
     <div class="seg" id="seg"><div class="pill"></div>
-      <button data-d="sd" class="on">{{sd_card}}</button><button data-d="ftp">Wi-Fi (FTP)</button><button data-d="none">{{just_build}}</button></div>
+      <button data-d="sd" class="on">{{sd_card}}</button><button data-d="ftp">Wi-Fi (FTP)</button><button data-d="sw2t">SW2Transfer</button><button data-d="none">{{just_build}}</button></div>
     <div id="destPane"></div>
   </div>
 
@@ -834,9 +851,9 @@ const LANG=%%LANGJS%%,T=%%L10N%%;
 const fill=(s,o)=>s.replace(/\{(\w+)\}/g,(m,k)=>k in o?o[k]:m);
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const IC={file:`%%FILE%%`,folder:`%%FOLDER%%`,upd:`%%UPD%%`,sd:`%%SD%%`};
-const S={game:'',gameDir:false,update:'',dest:'sd',sd:'',ftp:'',icon:'',noTk:false};
-try{const o=JSON.parse(localStorage.getItem('nx2easy')||'{}');S.ftp=o.ftp||'';S.dest=o.dest||'sd';S.sd=o.sd||''}catch(e){}
-const persist=()=>{try{localStorage.setItem('nx2easy',JSON.stringify({ftp:S.ftp,dest:S.dest,sd:S.sd}))}catch(e){}};
+const S={game:'',gameDir:false,update:'',dest:'sd',sd:'',ftp:'',sw2t:'',sw2tPw:'',icon:'',noTk:false};
+try{const o=JSON.parse(localStorage.getItem('nx2easy')||'{}');S.ftp=o.ftp||'';S.sw2t=o.sw2t||'';S.dest=o.dest||'sd';S.sd=o.sd||''}catch(e){}
+const persist=()=>{try{localStorage.setItem('nx2easy',JSON.stringify({ftp:S.ftp,sw2t:S.sw2t,dest:S.dest,sd:S.sd}))}catch(e){}};
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const base=p=>p.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||p;
 async function api(path,body){const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json','X-Nx2':'1'},body:JSON.stringify(body)}:{});return r.json()}
@@ -877,7 +894,7 @@ document.addEventListener('click',e=>{const c=e.target.closest('[data-clear]');i
 let drv=[];
 async function loadDrives(){drv=await api('/api/drives');if(!S.sd&&drv.length===1){S.sd=drv[0].path;persist()}renderDest()}
 function renderDest(){
-  const P=$('#destPane'),i=['sd','ftp','none'].indexOf(S.dest);
+  const P=$('#destPane'),i=['sd','ftp','sw2t','none'].indexOf(S.dest);
   $('#seg .pill').style.transform=`translateX(${i*100}%)`;
   $$('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.d===S.dest));
   if(S.dest==='sd'){
@@ -894,6 +911,14 @@ function renderDest(){
       <input class="in" id="iFtp" style="width:100%" placeholder="${T.eg} 192.168.1.42" value="${esc(S.ftp)}">
       <p class="hint">${T.ftp_hint}</p></div>`;
     $('#iFtp').oninput=e=>{S.ftp=e.target.value.trim();persist();check()};
+  }else if(S.dest==='sw2t'){
+    P.innerHTML=`<div class="pane"><label class="f">${T.console_addr}</label>
+      <input class="in" id="iSw2t" style="width:100%" placeholder="${T.eg} 192.168.1.42" value="${esc(S.sw2t)}">
+      <label class="f" style="margin-top:12px">${T.sw2t_pw}</label>
+      <input class="in" id="iSw2tPw" type="password" autocomplete="off" style="width:100%" value="${esc(S.sw2tPw)}">
+      <p class="hint">${T.sw2t_hint}</p></div>`;
+    $('#iSw2t').oninput=e=>{S.sw2t=e.target.value.trim();persist();check()};
+    $('#iSw2tPw').oninput=e=>{S.sw2tPw=e.target.value};
   }else{
     P.innerHTML=`<div class="pane empty">${T.none_hint}</div>`;
   }
@@ -911,11 +936,11 @@ function render(){
 }
 $('#clrIcon').onclick=()=>{S.icon='';render()};
 function check(){
-  const ok1=!!S.game, ok2=S.dest==='none'||(S.dest==='sd'&&!!S.sd)||(S.dest==='ftp'&&/^[\w.\-]+(:\d+)?$/.test(S.ftp));
+  const ok1=!!S.game, ok2=S.dest==='none'||(S.dest==='sd'&&!!S.sd)||(S.dest==='ftp'&&/^[\w.\-]+(:\d+)?$/.test(S.ftp))||(S.dest==='sw2t'&&/^[\w.\-]+(:\d+)?$/.test(S.sw2t));
   $('#c1').classList.toggle('done',ok1);$('#c2').classList.toggle('done',ok2);
   $('#c3').classList.toggle('done',!!(S.icon||$('#iTitle').value||$('#iVersion').value||$('#iName').value));
   const g=$('#go');g.disabled=!(ok1&&ok2);
-  g.textContent=S.dest==='none'?T.go_none:S.dest==='ftp'?T.go_ftp:T.go_sd;
+  g.textContent=S.dest==='none'?T.go_none:S.dest==='ftp'||S.dest==='sw2t'?T.go_ftp:T.go_sd;
 }
 ['#iTitle','#iVersion','#iName'].forEach(s=>$(s).oninput=check);
 $('#t3').onclick=()=>{const c=$('#c3');c.classList.toggle('opened');c.classList.toggle('fd');$('#f3').classList.toggle('open')};
@@ -933,7 +958,7 @@ async function run(body){
   show('vRun');poll();
 }
 $('#go').onclick=()=>{$('#eMain').textContent='';
-  run({action:'make',game:S.game,update:S.update,dest:S.dest,sd:S.sd,ftp:S.ftp,icon:S.icon,
+  run({action:'make',game:S.game,update:S.update,dest:S.dest,sd:S.sd,ftp:S.ftp,sw2t:S.sw2t,sw2tPw:S.sw2tPw,icon:S.icon,
     title:$('#iTitle').value,version:$('#iVersion').value,name:$('#iName').value,nroOnly:$('#iNro').checked})};
 $('#bSetup').onclick=()=>run({action:'setup'});
 $('#bAuto').onclick=()=>run({action:'auto'});
@@ -1046,9 +1071,9 @@ $('#bPorts').onclick=async()=>{drawer(true);const L=$('#portList');L.innerHTML='
   const ps=await api('/api/ports');
   L.innerHTML=ps.length?ps.map((p,i)=>`<div class="port" style="animation-delay:${i*.05}s"><div class="ico">${IC.file}</div><div class="t"><b>${esc(p.name)}</b><small>${fmtB(p.size)} · ${new Date(p.date*1000).toLocaleString(LANG,{dateStyle:'short',timeStyle:'short'})}</small></div>
     <button class="sm" data-inst="${esc(p.name)}">${T.install}</button></div>`).join('')
-    +`<p class="hint" style="margin-top:14px">${fill(T.install_hint,{dest:S.dest==='ftp'?'Wi-Fi '+esc(S.ftp||'?'):S.dest==='sd'?esc(S.sd||'?'):T.none_chosen})}</p>`
+    +`<p class="hint" style="margin-top:14px">${fill(T.install_hint,{dest:S.dest==='ftp'?'Wi-Fi '+esc(S.ftp||'?'):S.dest==='sw2t'?'SW2Transfer '+esc(S.sw2t||'?'):S.dest==='sd'?esc(S.sd||'?'):T.none_chosen})}</p>`
     :'<div class="empty" style="margin-top:14px">'+T.no_ports+'</div>';
-  $$('[data-inst]').forEach(b=>b.onclick=()=>{drawer(false);run({action:'install',name:b.dataset.inst,dest:S.dest,sd:S.sd,ftp:S.ftp})});
+  $$('[data-inst]').forEach(b=>b.onclick=()=>{drawer(false);run({action:'install',name:b.dataset.inst,dest:S.dest,sd:S.sd,ftp:S.ftp,sw2t:S.sw2t,sw2tPw:S.sw2tPw})});
 };
 $('#closeD').onclick=$('#scrim').onclick=()=>drawer(false);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')drawer(false)});

@@ -40,14 +40,16 @@ HELP_SWITCH = f"""{TOOL} {VERSION}: a Switch game you own, made into a homebrew 
     ... and then put on a card, with either of:
       --sd <drive or folder>         the console's card, in this computer
       --ftp <host[:port]>            an FTP server on the console (port 5000)
+      --sw2t <host[:port]>           SW2Transfer open on the console (port 6967; faster than FTP. Its password, if it has one:
+                                     SW2T_PASSWORD, or asked for)
       --sd-format auto | fat32 | exfat     fat32: a large RomFS in 2 GB parts; exfat: one file (default: asked of the drive)
-  {ME} install <name> --sd <drive> | --ftp <host>  [--sd-format ..] [--nro-only]
+  {ME} install <name> --sd <drive> | --ftp <host> | --sw2t <host>  [--sd-format ..] [--nro-only]
                                      a port already built, put on a card (--nro-only: its program alone, when the game's
                                      files are on the card already)
   {ME} list                 the ports already built
 
   ADVANCED option of make and install:
-      --long-log                     with --sd or --ftp: the port writes its detailed log from its first run (the file "debug"
+      --long-log                     with --sd, --ftp or --sw2t: the port writes its detailed log from its first run (the file "debug"
                                      in its folder; much slower, and a large file. Delete "debug" to turn it off)
 
 On the card a port is its program, /switch/nx-relink/<name>.nro, and its folder at the card's root, /nx-relink/<name>/: the
@@ -73,10 +75,12 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
     ... and then put on a card, with either of:
       --sd <drive or folder>         the console's card, in this computer
       --ftp <host[:port]>            an FTP server on the console (port 5000)
+      --sw2t <host[:port]>           SW2Transfer open on the console (port 6967; faster than FTP. Its password, if it has one:
+                                     SW2T_PASSWORD, or asked for)
       --sd-format auto | fat32 | exfat     fat32: a large RomFS in 2 GB parts; exfat: one file (default: asked of the drive)
-  {ME} install <name> --sd <drive> | --ftp <host>  [--sd-format ..] [--nro-only]
+  {ME} install <name> --sd <drive> | --ftp <host> | --sw2t <host>  [--sd-format ..] [--nro-only]
                                      a port already built, put on a card (--nro-only: its program alone)
-  {ME} identity <name> --title "..." [--author "..."] [--version "..."] [--icon <picture>] [--ftp <host> | --sd <drive>]
+  {ME} identity <name> --title "..." [--author "..."] [--version "..."] [--icon <picture>] [--ftp <host> | --sw2t <host> | --sd <drive>]
   {ME} identity <name> --ftp <host>
                                      the name, version and icon the homebrew menu shows for a port: the ones you give (the icon
                                      from any picture), or, with --ftp alone, the game's own taken from the console if the game
@@ -97,7 +101,7 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
                                      (default auto: all of them, or main, sdk and those with thread-local storage when the
                                      game loads modules of its own as it runs). The console's loader maps eight images for a
                                      program: "all" leaves a game that loads its own no room for them
-      --long-log                     with --sd or --ftp: the port writes its detailed log from its first run (the file "debug"
+      --long-log                     with --sd, --ftp or --sw2t: the port writes its detailed log from its first run (the file "debug"
                                      in its folder; slower, and larger)
 
 On the card a port is its program, /switch/nx2-relink/<name>.nro, and its folder at the card's root, /nx2-relink/<name>/: the
@@ -285,22 +289,28 @@ def cmd_check(args):
     run([PY, f'{ROOT}/tools/check.py', f'{work}/exefs'])
 
 
+def destination(sd, ftp, sw2t):
+    """tools/install.py's arguments for where a port goes: the card in this computer, an FTP server or SW2Transfer on the console."""
+    return ['--sd', sd] if sd else ['--ftp', ftp] if ftp else ['--sw2t', sw2t] if sw2t else []
+
+
 def cmd_make(args):
     update, aocs = take(args, '--update'), take(args, '--aoc', many=True)
     name, target, keys = take(args, '--name'), take(args, '--target'), take(args, '--keys')
     shown = [(k, take(args, k)) for k in ('--title', '--version', '--icon', '--author')]
-    sd, ftp, fmt = take(args, '--sd'), take(args, '--ftp'), take(args, '--sd-format', 'auto')
+    sd, ftp, sw2t, fmt = take(args, '--sd'), take(args, '--ftp'), take(args, '--sw2t'), take(args, '--sd-format', 'auto')
     install_target = take(args, '--install-target')
     ttx, memory, whole = take(args, '--ttx'), take(args, '--memory'), take(args, '--whole')
     nro_only = flag(args, '--nro-only')
     no_romfs, long_log = flag(args, '--no-romfs') or nro_only, flag(args, '--long-log')
-    if len(args) != 1 or (sd and ftp):
+    if len(args) != 1 or [bool(sd), bool(ftp), bool(sw2t)].count(True) > 1:
         sys.exit(HELP)
+    where = destination(sd, ftp, sw2t)
     game = args[0]
     if game.lower().endswith('.nup') or os.path.isdir(game):
         if not SWITCH2:
             sys.exit(f'{game} is a NUP container or a folder. {TOOL} takes a Switch game\'s NSP: that kind of dump is nx2-relink\'s.')
-        return make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory, whole, long_log)
+        return make_switch2(game, update, name, shown, where, ttx, fmt, no_romfs, memory, whole, long_log)
     if not SWITCH:
         sys.exit(f'{game}: {TOOL} takes a NUP container, or a folder of a game\'s loose files. A Switch game (NSP) is nx-relink\'s.')
     for path in [game, update, *aocs]:
@@ -314,7 +324,7 @@ def cmd_make(args):
     need(['every game', 'a Switch game'] + ([FOR_2] if target != 'switch' else []) + (['a Switch'] if target != 'switch2' else []))
     name = slug(name or title_of(game))
     work = f'{ROOT}/build/{name}_nsp'
-    steps = 4 if (sd or ftp) else 3
+    steps = 4 if where else 3
     phase(1, steps, f'{name}: the game\'s code{"" if no_romfs else " and files"}, from its NSP')
     run([PY, f'{ROOT}/tools/nsp.py', game, work] + ([] if no_romfs else ['--romfs']) + (['--update', update] if update else []) +
         [x for a in aocs for x in ('--aoc', a)] + (['--keys', keys] if keys else []))
@@ -326,14 +336,14 @@ def cmd_make(args):
         run([PY, f'{ROOT}/tools/shaderpack.py', work])
     phase(2, steps, f'{name}: the port, built for {target}')
     run([PY, f'{ROOT}/tools/build.py', f'{work}/exefs', '--name', name, '--target', target] + [x for k, v in shown if v for x in (k, v)])
-    if sd or ftp:
+    if where:
         it = install_target or ('switch2' if target == 'switch2' else 'switch')
         phase(3, steps, f'{name}: put on the card ({it}), and read back')
-        run([PY, f'{ROOT}/tools/install.py', name, '--target', it, '--sd-format', fmt] + (['--sd', sd] if sd else ['--ftp', ftp]) +
+        run([PY, f'{ROOT}/tools/install.py', name, '--target', it, '--sd-format', fmt] + where +
             (['--long-log'] if long_log else []))
         phase(steps, steps, f'{name}: done. It is on the card: open it from the homebrew menu, started over a game')
     else:
-        phase(steps, steps, f'{name}: done. To put it on a console\'s card:  {ME} install {name} --sd <drive>   (or --ftp <host>)')
+        phase(steps, steps, f'{name}: done. To put it on a console\'s card:  {ME} install {name} --sd <drive>   (or --ftp / --sw2t <host>)')
 
 
 def advanced(memory, whole):
@@ -352,7 +362,7 @@ def advanced(memory, whole):
     return out
 
 
-def make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory=None, whole=None, long_log=False):
+def make_switch2(game, update, name, shown, where, ttx, fmt, no_romfs, memory=None, whole=None, long_log=False):
     """A Switch 2 game, from its NUP container or a folder of its loose files: its own SDK does the drawing, so nothing of a Switch
     game's port is needed but the relinking (no keys: a dump of these isn't encrypted; no shaders translated; no check of what it
     asks, which is of a Switch's). Its updates are laid over it by tools/game2.py."""
@@ -362,17 +372,17 @@ def make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory=
     extra = advanced(memory, whole)
     need([FOR_2, 'devkitA64 (the compiler)', 'elf2nro and nacptool (switch-tools)', 'zstandard', 'lz4'])
     name = slug(name or title_of(game))
-    steps = 3 if (sd or ftp) else 2
+    steps = 3 if where else 2
     phase(1, steps, f'{name}: the game\'s code, from its dump, and the port built')
     run([PY, f'{ROOT}/tools/build.py', game, '--name', name, '--target', 'switch2'] + (['--update', update] if update else []) + extra +
         [x for k, v in shown if v for x in (k, v)])
-    if sd or ftp:
+    if where:
         phase(2, steps, f'{name}: put on the card, with the game\'s files made into one image as they go')
-        run([PY, f'{ROOT}/tools/install.py', name, '--target', 'switch2', '--sd-format', fmt] + (['--sd', sd] if sd else ['--ftp', ftp]) +
+        run([PY, f'{ROOT}/tools/install.py', name, '--target', 'switch2', '--sd-format', fmt] + where +
             (['--ttx', ttx] if ttx else []) + (['--no-romfs'] if no_romfs else []) + (['--long-log'] if long_log else []))
         phase(steps, steps, f'{name}: done. It is on the card: open it from the homebrew menu (the folder "nx2-relink"), started over a game')
     else:
-        phase(steps, steps, f'{name}: done. To put it on a console\'s card:  {ME} install {name} --sd <drive>   (or --ftp <host>)')
+        phase(steps, steps, f'{name}: done. To put it on a console\'s card:  {ME} install {name} --sd <drive>   (or --ftp / --sw2t <host>)')
 
 
 def cmd_install(args):
@@ -390,9 +400,10 @@ def cmd_identity(args):
         sys.exit(HELP)
     name = args[0]
     by_hand = any(a in args for a in ('--title', '--author', '--version', '--icon'))
-    sd, ftp = take(args, '--sd'), (take(args, '--ftp') if by_hand else None)
+    sd, ftp, sw2t = take(args, '--sd'), (take(args, '--ftp') if by_hand else None), take(args, '--sw2t')
     if not by_hand and '--ftp' in args:
         ftp = args[args.index('--ftp') + 1]
+    where = destination(sd, ftp, sw2t)
     r = subprocess.run([PY, f'{ROOT}/tools/control.py'] + args)
     if r.returncode:
         sys.exit(r.returncode)
@@ -400,12 +411,12 @@ def cmd_identity(args):
     targets = ['switch2'] if info.get('switch2') else [t for t, f in (('switch', f'{ROOT}/out/{name}.nro'), ('switch2', f'{ROOT}/out/{name}-switch2.nro'))
                                                        if os.path.isfile(f)]
     for t in targets:
-        phase(1, 2 if (sd or ftp) else 1, f'{name}: built again, with its name, version and icon')
+        phase(1, 2 if where else 1, f'{name}: built again, with its name, version and icon')
         run([PY, f'{ROOT}/tools/build.py', f'{ROOT}/build/{name}_nsp/exefs', '--name', name, '--target', t])
-    if sd or ftp:
+    if where:
         phase(2, 2, f'{name}: put on the card')
         for t in targets[-1:]:
-            run([PY, f'{ROOT}/tools/install.py', name, '--target', t, '--no-romfs'] + (['--sd', sd] if sd else ['--ftp', ftp]))
+            run([PY, f'{ROOT}/tools/install.py', name, '--target', t, '--no-romfs'] + where)
 
 
 def built():

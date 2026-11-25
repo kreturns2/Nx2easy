@@ -48,6 +48,18 @@ or from the command line:
 .venv\Scripts\python.exe nxrelink.py make "D:\game.nup" --name mygame --sd E:
 ```
 
+### Over Wi-Fi with SW2Transfer
+
+[SW2Transfer](https://github.com/Rodpad/SW2Transfer) (the app, or its background plugin) receives the port over Wi-Fi, several
+connections at once: much faster than FTP. Choose **SW2Transfer** in step 2 and type the address shown on the console's screen,
+or from the command line:
+
+```powershell
+.venv\Scripts\python.exe nxrelink.py make "D:\game.nup" --name mygame --sw2t 192.168.1.42
+```
+
+If a password is set in SW2Transfer, give it in the window, or in `SW2T_PASSWORD` (the terminal asks for it otherwise).
+
 Full documentation: [docs/nx2-relink.md](docs/nx2-relink.md).
 
 ## Languages

@@ -48,6 +48,18 @@ ou en ligne de commande :
 .venv\Scripts\python.exe nxrelink.py make "D:\jeu.nup" --name monjeu --sd E:
 ```
 
+### Par Wi-Fi avec SW2Transfer
+
+[SW2Transfer](https://github.com/Rodpad/SW2Transfer) (l'application, ou son plugin en arrière-plan) reçoit le port par Wi-Fi, sur
+plusieurs connexions à la fois : bien plus rapide que le FTP. Choisissez **SW2Transfer** à l'étape 2 et tapez l'adresse affichée
+sur l'écran de la console, ou en ligne de commande :
+
+```powershell
+.venv\Scripts\python.exe nxrelink.py make "D:\jeu.nup" --name monjeu --sw2t 192.168.1.42
+```
+
+Si SW2Transfer a un mot de passe, donnez-le dans la fenêtre, ou dans `SW2T_PASSWORD` (sinon le terminal le demande).
+
 ## Langues
 
 Français, anglais, espagnol, allemand, italien et portugais. La langue du navigateur est prise par défaut ; le menu en haut de la page
